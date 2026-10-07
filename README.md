@@ -20,7 +20,7 @@ You need Python 3.11 or newer. The simplest route is [uv](https://docs.astral.sh
 brew install uv
 
 # then, from a git URL ...
-uv tool install git+<repo-url>
+uv tool install git+https://github.com/matthewperkins/syncview
 # ... or from a downloaded/unzipped copy of this folder
 uv tool install ./syncview
 ```
@@ -30,11 +30,11 @@ terminal.
 
 To update later: `uv tool upgrade syncview` (git install) or `uv tool install --reinstall ./syncview`.
 
-With plain pip in a virtual environment, `pip install <repo-url or folder>` works the same way.
+With plain pip in a virtual environment, `pip install git+https://github.com/matthewperkins/syncview` (or a folder) works the same way.
 
 Optional extras:
 
-- **NVIDIA GPU decoding** (Linux/Windows only): `uv tool install "syncview[gpu] @ git+<repo-url>"`.
+- **NVIDIA GPU decoding** (Linux/Windows only): `uv tool install "syncview[gpu] @ git+https://github.com/matthewperkins/syncview"`.
 - **Clip export** (Python API only, not needed for the viewer) needs the `ffmpeg` program:
   `brew install ffmpeg` on macOS.
 
