@@ -86,7 +86,8 @@ def fmt_time(t, span=None):
 
 
 def fmt_span(s):
-    return f"{s:g} s" if s < 60 else (f"{s / 60:g} min" if s < 3600 else f"{s / 3600:g} h")
+    # 3 significant digits: scroll-zooming makes arbitrary spans that must still fit the box
+    return f"{s:.3g} s" if s < 60 else (f"{s / 60:.3g} min" if s < 3600 else f"{s / 3600:.3g} h")
 
 
 def parse_span(text):
@@ -404,17 +405,10 @@ class MainWindow(QtWidgets.QMainWindow):
             label.setMaximumWidth(130)
             self.glw.addItem(label, row=i, col=0)
             vb = RowViewBox(self, i)
-            last = i == len(visible) - 1
-            axes = {"left": SparseYAxis("left")}
-            if last:
-                axes["bottom"] = RelTimeAxis("bottom")
-            p = self.glw.addPlot(row=i, col=1, viewBox=vb, axisItems=axes)
+            p = self.glw.addPlot(row=i, col=1, viewBox=vb, axisItems={"left": SparseYAxis("left")})
             p.hideButtons()
             p.getAxis("left").setWidth(60)
-            if last:
-                p.setLabel("bottom", "time relative to cursor   ← past | future →")
-            else:
-                p.hideAxis("bottom")
+            p.hideAxis("bottom")
             if first is None:
                 first = p
             else:
@@ -431,9 +425,27 @@ class MainWindow(QtWidgets.QMainWindow):
             row.cursor, row.msg = cursor, msg
             row.key = self.cache.key(s)
             self.rows.append(row)
+        lay = self.glw.ci.layout
+        if first is not None:
+            # the time axis gets its own grid row: inside the last plot it would make that row shorter
+            axl = self.glw.ci.addLayout(row=len(visible), col=1)
+            axl.setContentsMargins(0, 0, 0, 0)
+            axl.setSpacing(0)
+            pad = QtWidgets.QGraphicsWidget()                # under the plots' left axes
+            pad.setMinimumWidth(60)
+            pad.setMaximumWidth(60)
+            axl.addItem(pad, row=0, col=0)
+            ax = RelTimeAxis("bottom")
+            ax.linkToView(first.vb)
+            ax.setLabel("time relative to cursor   ← past | future →")
+            axl.addItem(ax, row=0, col=1)
+            axl.setMaximumHeight(ax.maximumHeight())
+            self._time_pad = pad
+            for r in range(len(visible)):
+                lay.setRowStretchFactor(r, 1)
+            lay.setRowStretchFactor(len(visible), 0)
         # QGraphicsGridLayout keeps stale column geometry after clear(); make the plot column take the
         # free width and force a relayout now (otherwise new plots stay squeezed until the window resizes)
-        lay = self.glw.ci.layout
         lay.setColumnStretchFactor(0, 0)
         lay.setColumnStretchFactor(1, 1)
         lay.invalidate()
