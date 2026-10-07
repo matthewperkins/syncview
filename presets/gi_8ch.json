@@ -1,0 +1,50 @@
+{
+ "time_base": 60.0,
+ "channels": [
+  {
+   "ch": "CH5",
+   "label": "antrum1",
+   "mode": "slow"
+  },
+  {
+   "ch": "CH6",
+   "label": "antrum2",
+   "mode": "slow"
+  },
+  {
+   "ch": "CH7",
+   "label": "antrum3",
+   "mode": "slow"
+  },
+  {
+   "ch": "CH8",
+   "label": "antrum4",
+   "mode": "slow"
+  },
+  {
+   "ch": "CH9",
+   "label": "duod1",
+   "mode": "slow"
+  },
+  {
+   "ch": "CH10",
+   "label": "duod2",
+   "mode": "slow"
+  },
+  {
+   "ch": "CH11",
+   "label": "duod3",
+   "mode": "slow"
+  },
+  {
+   "ch": "CH12",
+   "label": "duod4",
+   "mode": "slow"
+  }
+ ],
+ "overview": {
+  "ch": "CH5",
+  "mode": "bandpower",
+  "label": "antrum1 slow-wave power (0.03-0.25 Hz RMS, 30 s)"
+ }
+}

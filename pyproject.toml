@@ -1,0 +1,16 @@
+[project]
+name = "syncview"
+version = "0.1.0"
+description = "Synchronized behaviour video + Open Ephys EMG/GI data: clip rendering and an interactive viewer"
+requires-python = ">=3.11"
+dependencies = ["numpy", "scipy", "matplotlib", "pillow", "PySide6", "pyqtgraph"]
+
+[project.scripts]
+syncview = "syncview.app.main:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["syncview*"]
