@@ -24,6 +24,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from ..core.filters import MODES
 from ..core.oe import OERecording, SyncError, check_sync
 from ..core.render import PALETTE
+from ..core.paths import default_cache_root, platform_cache_root
 from ..core.video import DECODERS, video_duration
 from ..data.cache import TraceCache
 from .channels import ChannelPanel
@@ -496,7 +497,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.video_path = str(path)
         self.video_view.show()
         self.video_view.set_message(f"opening {Path(path).name} …")
-        self.decoder = VideoDecoder(path, backend=self.decoder_backend)
+        self.decoder = VideoDecoder(path, backend=self.decoder_backend, index_dir=self.cache.root / "video_index")
         self.video_view.decoder = self.decoder
         self.decoder.target = (self.video_view.width(), self.video_view.height())
         self.decoder.opened.connect(self._video_opened)
@@ -764,7 +765,8 @@ def main(argv=None):
     ap.add_argument("--preset", help="channel preset JSON (save one from the Channels panel); "
                                      "default: all electrode channels of the recording")
     ap.add_argument("--cache", default=None,
-                    help="cache folder for filtered traces (default: syncview_cache/ next to the syncview package)")
+                    help="cache folder for filtered traces and video indexes (default: $SYNCVIEW_CACHE, "
+                         f"else {platform_cache_root()})")
     ap.add_argument("--stream", default="acquisition_board",
                     help="Open Ephys continuous stream holding the data and the camera TTL (default: %(default)s)")
     ap.add_argument("--trigger-line", type=int, default=1,
@@ -778,7 +780,8 @@ def main(argv=None):
         rec = OERecording(args.rec, stream=args.stream)
     except (OSError, ValueError) as e:
         ap.exit(2, f"syncview: cannot open recording: {e}\n")
-    cache_root = Path(args.cache) if args.cache else Path(__file__).resolve().parents[2] / "syncview_cache"
+    cache_root = Path(args.cache).expanduser() if args.cache else default_cache_root()
+    print(f"syncview: cache folder {cache_root}", file=sys.stderr)
     cache = TraceCache(rec, cache_root)
     preset = json.loads(Path(args.preset).read_text()) if args.preset else preset_from_recording(rec)
 

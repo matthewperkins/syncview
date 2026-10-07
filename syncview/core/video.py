@@ -1,9 +1,13 @@
 """Frame-exact video decoding (GPU via PyNvVideoCodec, or CPU via PyAV) and ffmpeg encoding."""
+import hashlib
+import os
 import subprocess
 import warnings
 from pathlib import Path
 
 import numpy as np
+
+from .paths import default_cache_root
 
 DECODERS = ("auto", "gpu", "cpu")
 
@@ -32,22 +36,44 @@ class NvDecoder:
 class CpuDecoder:
     """CPU decoding via PyAV (FFmpeg); same interface and frame indexing as NvDecoder.
 
-    Frame index = rank of the packet's presentation timestamp, read from the container once at open
-    (a quick demux, no decoding), so indexing stays frame-exact even when the timestamps jitter."""
+    Frame index = rank of the packet's presentation timestamp, read from the container (a demux, no
+    decoding), so indexing stays frame-exact even when the timestamps jitter. The demux reads the whole
+    file, so the sorted timestamps are saved under index_dir (default <cache root>/video_index) and
+    reused while the video's path, size and modification time are unchanged."""
     name = "CPU (FFmpeg)"
 
-    def __init__(self, path):
+    def __init__(self, path, index_dir=None):
         import av
         self._c = av.open(str(path))
         self._s = self._c.streams.video[0]
         self._s.thread_type = "AUTO"
-        self.pts = np.sort(np.array([pk.pts for pk in self._c.demux(self._s)
-                                     if pk.size and pk.pts is not None], dtype=np.int64))
+        self.pts = self._load_index(path, index_dir)
         if not len(self.pts):
             raise ValueError("no timestamped video packets found")
         self.width, self.height = self._s.codec_context.width, self._s.codec_context.height
         self._frames = None
         self.seek_to_index(0)
+
+    def _load_index(self, path, index_dir):
+        path = Path(path).resolve()
+        st = path.stat()
+        tag = hashlib.sha1(f"{path}|{st.st_size}|{st.st_mtime_ns}".encode()).hexdigest()[:16]
+        f = Path(index_dir or default_cache_root() / "video_index") / f"{path.stem}.{tag}.npy"
+        try:
+            return np.load(f)
+        except (OSError, ValueError):
+            pass
+        pts = np.sort(np.array([pk.pts for pk in self._c.demux(self._s)
+                                if pk.size and pk.pts is not None], dtype=np.int64))
+        try:                                    # atomic write; a failure here only costs speed
+            f.parent.mkdir(parents=True, exist_ok=True)
+            tmp = f.with_suffix(f".{os.getpid()}.tmp")
+            with open(tmp, "wb") as fh:
+                np.save(fh, pts)
+            os.replace(tmp, f)
+        except OSError as e:
+            warnings.warn(f"could not save the video index to {f}: {e}")
+        return pts
 
     def __len__(self):
         return len(self.pts)
@@ -72,19 +98,20 @@ class CpuDecoder:
         return out
 
 
-def open_decoder(path, backend="auto"):
-    """A frame decoder for `path`. backend: 'gpu', 'cpu', or 'auto' (GPU if it works here, else CPU)."""
+def open_decoder(path, backend="auto", index_dir=None):
+    """A frame decoder for `path`. backend: 'gpu', 'cpu', or 'auto' (GPU if it works here, else CPU).
+    index_dir: where the CPU decoder keeps its frame-timestamp index (see CpuDecoder)."""
     if backend not in DECODERS:
         raise ValueError(f"decoder must be one of {DECODERS}, not {backend!r}")
     if backend == "cpu":
-        return CpuDecoder(path)
+        return CpuDecoder(path, index_dir)
     try:
         return NvDecoder(path)
     except Exception as e:
         if backend == "gpu":
             raise
         warnings.warn(f"GPU video decoding unavailable ({type(e).__name__}: {e}); using the CPU decoder.")
-        return CpuDecoder(path)
+        return CpuDecoder(path, index_dir)
 
 
 class FrameSource:

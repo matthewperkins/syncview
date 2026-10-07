@@ -22,10 +22,11 @@ class VideoDecoder(QtCore.QObject):
     opened = QtCore.Signal(int, int, int, str)   # n_frames, width, height, decoder name
     failed = QtCore.Signal(str)
 
-    def __init__(self, path, cache_frames=250, backend="auto"):
+    def __init__(self, path, cache_frames=250, backend="auto", index_dir=None):
         super().__init__()
         self.path = str(path)
         self.backend = backend
+        self.index_dir = index_dir
         self.gop = keyframe_interval(path)
         self.cache = OrderedDict()
         self.cache_frames = cache_frames
@@ -54,7 +55,7 @@ class VideoDecoder(QtCore.QObject):
 
     def _loop(self):
         try:
-            dec = open_decoder(self.path, self.backend)   # decoder (and any CUDA context) lives in this thread
+            dec = open_decoder(self.path, self.backend, self.index_dir)   # decoder (and any CUDA context) lives in this thread
             n = len(dec)
             self.opened.emit(n, dec.width, dec.height, dec.name)
         except Exception as e:
