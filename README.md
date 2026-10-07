@@ -23,6 +23,9 @@ uv tool install git+<repo-url>
 uv tool install ./syncview
 ```
 
+If uv then says its tool folder "is not on your PATH", run `uv tool update-shell` once and open a new
+terminal.
+
 To update later: `uv tool upgrade syncview` (git install) or `uv tool install --reinstall ./syncview`.
 
 With plain pip in a virtual environment, `pip install <repo-url or folder>` works the same way.
