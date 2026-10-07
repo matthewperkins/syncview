@@ -259,6 +259,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # ---- central area: data rows + overview strip
         self.glw = pg.GraphicsLayoutWidget()
         self.glw.ci.setSpacing(2)
+        self.glw.ci.layout.setContentsMargins(9, 4, 9, 2)     # default 9 all round; rows get the rest
         self.ov_widget = pg.GraphicsLayoutWidget()
         self.ov_widget.setFixedHeight(110)
         self.ov_plot = self.ov_widget.addPlot(viewBox=OverviewViewBox(self),
@@ -446,7 +447,6 @@ class MainWindow(QtWidgets.QMainWindow):
             axl.addItem(pad, row=0, col=0)
             ax = RelTimeAxis("bottom")
             ax.linkToView(first.vb)
-            ax.setLabel("time relative to cursor   ← past | future →")
             axl.addItem(ax, row=0, col=1)
             axl.setMaximumHeight(ax.maximumHeight())
             self._time_pad = pad
