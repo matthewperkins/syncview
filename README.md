@@ -201,10 +201,12 @@ doesn't say out loud:
 - **Threads:** the cache builder, window worker and video decoder each run one background thread with
   "latest request wins" semantics. The GPU decoder must be created in its own thread (CUDA context).
   `CacheBuilder.stop()` must run on close, or the interpreter shuts down underneath a build.
-- **Checked:** Linux with NVIDIA (T400); a Python 3.12 clean install with no GPU module and no ffmpeg,
-  standing in for macOS; sync warnings against wrong pairs and simulated missed/double triggers.
-  **Not yet checked: a real Mac, Windows, or recordings from other rigs.** Treat those as the most
-  likely places for bugs.
+- **Checked:** Linux with NVIDIA (T400); a Python 3.12 clean install with no GPU module and no ffmpeg;
+  a real Mac (Apple silicon, CPU decoding, a 10-minute excerpt of the original data); sync warnings
+  against wrong pairs and simulated missed/double triggers. The Mac run found one bug: macOS allows
+  only 256 open files per process and every memory-mapped cache file holds one (fixed in `e0aa797`;
+  test with `ulimit -n 256` on Linux). **Not yet checked: Windows, full-length sessions on a Mac, or
+  recordings from other rigs.** Treat those as the most likely places for bugs.
 - **Defaults chosen for the original data:** the `slow` mode's 0.03 Hz low cut (GI slow-wave peaks at
   0.06–0.11 Hz; the headstage's analog high-pass is about 0.094 Hz, first order) and the 150 Hz EMG
   high-pass. Reconsider both for other preparations.
