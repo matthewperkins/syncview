@@ -22,7 +22,16 @@ class CacheBuilder(QtCore.QObject):
         self._cv = threading.Condition()
         self._want = None
         self._wanted_keys = set()
-        threading.Thread(target=self._loop, daemon=True, name="cache-builder").start()
+        self._stop = False
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="cache-builder")
+        self._thread.start()
+
+    def stop(self, timeout=10.0):
+        """Cancel any build (it stops at the next chunk) and wait for the thread to exit."""
+        with self._cv:
+            self._stop = True
+            self._cv.notify()
+        self._thread.join(timeout)
 
     def request(self, specs):
         with self._cv:
@@ -33,8 +42,10 @@ class CacheBuilder(QtCore.QObject):
     def _loop(self):
         while True:
             with self._cv:
-                while self._want is None:
+                while self._want is None and not self._stop:
                     self._cv.wait()
+                if self._stop:
+                    return
                 specs, self._want = self._want, None
             todo = self.cache.missing(specs)
             if todo:
@@ -42,7 +53,7 @@ class CacheBuilder(QtCore.QObject):
                 try:
                     # abort only if something being built is no longer wanted
                     self.cache.build(todo, progress=self.progress.emit,
-                                     cancel=lambda: not keys <= self._wanted_keys)
+                                     cancel=lambda: self._stop or not keys <= self._wanted_keys)
                 except Cancelled:
                     continue
                 except Exception:

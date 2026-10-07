@@ -557,6 +557,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def closeEvent(self, ev):
         if self.decoder:
             self.decoder.stop()
+        self.builder.stop()             # cancel a cache build so it doesn't die mid-write at exit
         super().closeEvent(ev)
 
     # ------------------------------------------------------------------ playback
