@@ -6,11 +6,11 @@ from collections import OrderedDict
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from ..core.video import keyframe_interval
+from ..core.video import keyframe_interval, open_decoder
 
 
 class VideoDecoder(QtCore.QObject):
-    """Decodes frames by index on the GPU in its own thread.
+    """Decodes frames by index (GPU or CPU, see core.video.open_decoder) in its own thread.
 
     Strategy per request (k):
       * cached                      -> return it
@@ -19,12 +19,13 @@ class VideoDecoder(QtCore.QObject):
                                        (so stepping backwards inside the GOP is instant)
     """
     frame_ready = QtCore.Signal(int, object)     # frame index, QImage already scaled to the view
-    opened = QtCore.Signal(int, int, int)        # n_frames, width, height
+    opened = QtCore.Signal(int, int, int, str)   # n_frames, width, height, decoder name
     failed = QtCore.Signal(str)
 
-    def __init__(self, path, cache_frames=250):
+    def __init__(self, path, cache_frames=250, backend="auto"):
         super().__init__()
         self.path = str(path)
+        self.backend = backend
         self.gop = keyframe_interval(path)
         self.cache = OrderedDict()
         self.cache_frames = cache_frames
@@ -52,12 +53,10 @@ class VideoDecoder(QtCore.QObject):
             self.cache.popitem(last=False)
 
     def _loop(self):
-        import PyNvVideoCodec as nvc     # decoder (and its CUDA context) lives in this thread
         try:
-            dec = nvc.SimpleDecoder(self.path, use_device_memory=False, output_color_type=nvc.OutputColorType.RGB)
-            md = dec.get_stream_metadata()
+            dec = open_decoder(self.path, self.backend)   # decoder (and any CUDA context) lives in this thread
             n = len(dec)
-            self.opened.emit(n, md.width, md.height)
+            self.opened.emit(n, dec.width, dec.height, dec.name)
         except Exception as e:
             self.failed.emit(f"could not open video: {e}")
             return
@@ -81,7 +80,7 @@ class VideoDecoder(QtCore.QObject):
                         dec.seek_to_index(start)
                     frames = dec.get_batch_frames(k - start + 1)
                     for j, f in enumerate(frames):
-                        self._put(start + j, np.array(np.from_dlpack(f)))   # copy: decoder reuses buffers
+                        self._put(start + j, np.array(f))   # copy: the GPU decoder reuses its buffers
                     self._next = start + len(frames)
                 else:
                     self.cache.move_to_end(k)

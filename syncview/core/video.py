@@ -1,24 +1,103 @@
-"""Frame-exact video decoding (PyNvVideoCodec, GPU) and ffmpeg encoding."""
+"""Frame-exact video decoding (GPU via PyNvVideoCodec, or CPU via PyAV) and ffmpeg encoding."""
 import subprocess
 import warnings
 from pathlib import Path
 
 import numpy as np
-import PyNvVideoCodec as nvc
+
+DECODERS = ("auto", "gpu", "cpu")
+
+
+class NvDecoder:
+    """GPU (NVDEC) decoding via PyNvVideoCodec. Needs an NVIDIA GPU + driver."""
+    name = "GPU (NVDEC)"
+
+    def __init__(self, path):
+        import PyNvVideoCodec as nvc
+        self._dec = nvc.SimpleDecoder(str(path), use_device_memory=False, output_color_type=nvc.OutputColorType.RGB)
+        md = self._dec.get_stream_metadata()
+        self.width, self.height = md.width, md.height
+
+    def __len__(self):
+        return len(self._dec)
+
+    def seek_to_index(self, i):
+        self._dec.seek_to_index(int(i))
+
+    def get_batch_frames(self, k):
+        """Next k frames as (h, w, 3) uint8 arrays. They may share the decoder's buffers: copy to keep them."""
+        return [np.from_dlpack(f) for f in self._dec.get_batch_frames(int(k))]
+
+
+class CpuDecoder:
+    """CPU decoding via PyAV (FFmpeg); same interface and frame indexing as NvDecoder.
+
+    Frame index = rank of the packet's presentation timestamp, read from the container once at open
+    (a quick demux, no decoding), so indexing stays frame-exact even when the timestamps jitter."""
+    name = "CPU (FFmpeg)"
+
+    def __init__(self, path):
+        import av
+        self._c = av.open(str(path))
+        self._s = self._c.streams.video[0]
+        self._s.thread_type = "AUTO"
+        self.pts = np.sort(np.array([pk.pts for pk in self._c.demux(self._s)
+                                     if pk.size and pk.pts is not None], dtype=np.int64))
+        if not len(self.pts):
+            raise ValueError("no timestamped video packets found")
+        self.width, self.height = self._s.codec_context.width, self._s.codec_context.height
+        self._frames = None
+        self.seek_to_index(0)
+
+    def __len__(self):
+        return len(self.pts)
+
+    def seek_to_index(self, i):
+        # lands on the keyframe at/before frame i; get_batch_frames decodes forward and discards up to i
+        self._c.seek(int(self.pts[i]), stream=self._s, backward=True, any_frame=False)
+        self._frames = self._c.decode(self._s)
+        self._want = int(i)
+
+    def get_batch_frames(self, k):
+        out = []
+        while len(out) < k:
+            f = next(self._frames, None)
+            if f is None:
+                break
+            i = int(np.searchsorted(self.pts, f.pts)) if f.pts is not None else self._want
+            if i < self._want:
+                continue
+            out.append(f.to_ndarray(format="rgb24"))
+            self._want = i + 1
+        return out
+
+
+def open_decoder(path, backend="auto"):
+    """A frame decoder for `path`. backend: 'gpu', 'cpu', or 'auto' (GPU if it works here, else CPU)."""
+    if backend not in DECODERS:
+        raise ValueError(f"decoder must be one of {DECODERS}, not {backend!r}")
+    if backend == "cpu":
+        return CpuDecoder(path)
+    try:
+        return NvDecoder(path)
+    except Exception as e:
+        if backend == "gpu":
+            raise
+        warnings.warn(f"GPU video decoding unavailable ({type(e).__name__}: {e}); using the CPU decoder.")
+        return CpuDecoder(path)
 
 
 class FrameSource:
-    """Frame-exact random/sequential access to one or more videos (GPU decode via PyNvVideoCodec)."""
+    """Frame-exact random/sequential access to one or more videos."""
 
-    def __init__(self, paths):
+    def __init__(self, paths, decoder="auto"):
         self.paths = [Path(p) for p in np.atleast_1d(paths)]
-        self.decs = [nvc.SimpleDecoder(str(p), use_device_memory=False,
-                                       output_color_type=nvc.OutputColorType.RGB) for p in self.paths]
+        self.decs = [open_decoder(p, decoder) for p in self.paths]
         lens = [len(d) for d in self.decs]
         if len(set(lens)) > 1:
             warnings.warn(f"Videos have different frame counts {lens}; using the shortest.")
         self.n_frames = min(lens)
-        self.sizes = [(d.get_stream_metadata().width, d.get_stream_metadata().height) for d in self.decs]
+        self.sizes = [(d.width, d.height) for d in self.decs]
 
     def iter_frames(self, start, n, batch=50):
         for d in self.decs:
@@ -31,7 +110,7 @@ class FrameSource:
             if k == 0:
                 return
             for j in range(k):
-                yield [np.from_dlpack(b[j]) for b in batches]
+                yield [b[j] for b in batches]
             done += k
 
 

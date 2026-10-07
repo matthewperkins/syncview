@@ -23,6 +23,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..core.oe import OERecording, frame_sample_indices
 from ..core.render import PALETTE
+from ..core.video import DECODERS
 from ..data.cache import TraceCache
 from .channels import ChannelPanel
 from .video import VideoDecoder, VideoView
@@ -187,7 +188,7 @@ class Row:
 
 
 class MainWindow(QtWidgets.QMainWindow):
-    def __init__(self, rec, cache, preset, video=None):
+    def __init__(self, rec, cache, preset, video=None, decoder="auto"):
         super().__init__()
         self.rec, self.cache = rec, cache
         self.setWindowTitle(f"syncview — {rec.rec_dir.parent.name}/{rec.rec_dir.name}  "
@@ -202,6 +203,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._last_window_req = None
         self._xrange = None
         self.decoder = None
+        self.decoder_backend = decoder
         self.video_path = None
         self.frame_period = 0.02
         self._want_frame = None
@@ -450,14 +452,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.video_path = str(path)
         self.video_view.show()
         self.video_view.set_message(f"opening {Path(path).name} …")
-        self.decoder = VideoDecoder(path)
+        self.decoder = VideoDecoder(path, backend=self.decoder_backend)
         self.video_view.decoder = self.decoder
         self.decoder.target = (self.video_view.width(), self.video_view.height())
         self.decoder.opened.connect(self._video_opened)
         self.decoder.failed.connect(self.video_view.set_message)
         self.decoder.frame_ready.connect(self._frame_ready)
 
-    def _video_opened(self, n, w, h):
+    def _video_opened(self, n, w, h, decoder_name):
         try:
             fr = frame_sample_indices(self.rec, n, verbose=False)
         except ValueError as e:
@@ -469,7 +471,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.frame_period = float(np.median(np.diff(fr))) / self.rec.fs
         extra = len(self.rec.rising_edges(1)) - n
         self.statusBar().showMessage(f"{Path(self.video_path).name}: {n} frames {w}×{h}, {extra} extra trigger(s) "
-                                     f"dropped; video spans {fmt_time(self.frames[0])} – {fmt_time(self.frames[-1])}",
+                                     f"dropped; video spans {fmt_time(self.frames[0])} – {fmt_time(self.frames[-1])}; "
+                                     f"decoding on {decoder_name}",
                                      15000)
         if self.t < self.frames[0] or self.t > self.frames[-1]:
             self.t = float(self.frames[0])
@@ -701,6 +704,9 @@ def main(argv=None):
     ap.add_argument("--preset", help="channel preset JSON (save one from the Channels panel)")
     ap.add_argument("--cache", default=None,
                     help="cache folder for filtered traces (default: syncview_cache/ next to the syncview package)")
+    ap.add_argument("--decoder", choices=DECODERS, default="auto",
+                    help="video decoding: gpu (NVIDIA, PyNvVideoCodec), cpu (FFmpeg via PyAV), "
+                         "or auto = gpu if available (default)")
     args = ap.parse_args(argv)
 
     rec = OERecording(args.rec)
@@ -709,7 +715,7 @@ def main(argv=None):
     preset = json.loads(Path(args.preset).read_text()) if args.preset else DEFAULT_PRESET
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
-    win = MainWindow(rec, cache, preset, video=args.video)
+    win = MainWindow(rec, cache, preset, video=args.video, decoder=args.decoder)
     win.show()
     win.glw.setFocus()
     return app.exec()
