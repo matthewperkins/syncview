@@ -1,6 +1,7 @@
-"""Frame-exact video decoding (GPU via PyNvVideoCodec, or CPU via PyAV) and ffmpeg encoding."""
+"""Frame-exact video decoding (GPU via PyNvVideoCodec, or CPU via PyAV) and ffmpeg encoding (clip export)."""
 import hashlib
 import os
+import shutil
 import subprocess
 import warnings
 from pathlib import Path
@@ -33,6 +34,35 @@ class NvDecoder:
         return [np.from_dlpack(f) for f in self._dec.get_batch_frames(int(k))]
 
 
+def frame_pts(path, index_dir=None, container=None):
+    """Sorted presentation timestamps of the video stream's packets (stream time_base units):
+    entry k is frame k. Cached under index_dir (default <cache root>/video_index), keyed by the
+    file's path, size and modification time; an unreadable cache file is rebuilt."""
+    import av
+    path = Path(path).resolve()
+    st = path.stat()
+    tag = hashlib.sha1(f"{path}|{st.st_size}|{st.st_mtime_ns}".encode()).hexdigest()[:16]
+    f = Path(index_dir or default_cache_root() / "video_index") / f"{path.stem}.{tag}.npy"
+    try:
+        return np.load(f)
+    except (OSError, ValueError):
+        pass
+    c = container or av.open(str(path))
+    s = c.streams.video[0]
+    pts = np.sort(np.array([pk.pts for pk in c.demux(s) if pk.size and pk.pts is not None], dtype=np.int64))
+    if container is None:
+        c.close()
+    try:                                    # atomic write; a failure here only costs speed
+        f.parent.mkdir(parents=True, exist_ok=True)
+        tmp = f.with_suffix(f".{os.getpid()}.tmp")
+        with open(tmp, "wb") as fh:
+            np.save(fh, pts)
+        os.replace(tmp, f)
+    except OSError as e:
+        warnings.warn(f"could not save the video index to {f}: {e}")
+    return pts
+
+
 class CpuDecoder:
     """CPU decoding via PyAV (FFmpeg); same interface and frame indexing as NvDecoder.
 
@@ -47,33 +77,12 @@ class CpuDecoder:
         self._c = av.open(str(path))
         self._s = self._c.streams.video[0]
         self._s.thread_type = "AUTO"
-        self.pts = self._load_index(path, index_dir)
+        self.pts = frame_pts(path, index_dir, container=self._c)
         if not len(self.pts):
             raise ValueError("no timestamped video packets found")
         self.width, self.height = self._s.codec_context.width, self._s.codec_context.height
         self._frames = None
         self.seek_to_index(0)
-
-    def _load_index(self, path, index_dir):
-        path = Path(path).resolve()
-        st = path.stat()
-        tag = hashlib.sha1(f"{path}|{st.st_size}|{st.st_mtime_ns}".encode()).hexdigest()[:16]
-        f = Path(index_dir or default_cache_root() / "video_index") / f"{path.stem}.{tag}.npy"
-        try:
-            return np.load(f)
-        except (OSError, ValueError):
-            pass
-        pts = np.sort(np.array([pk.pts for pk in self._c.demux(self._s)
-                                if pk.size and pk.pts is not None], dtype=np.int64))
-        try:                                    # atomic write; a failure here only costs speed
-            f.parent.mkdir(parents=True, exist_ok=True)
-            tmp = f.with_suffix(f".{os.getpid()}.tmp")
-            with open(tmp, "wb") as fh:
-                np.save(fh, pts)
-            os.replace(tmp, f)
-        except OSError as e:
-            warnings.warn(f"could not save the video index to {f}: {e}")
-        return pts
 
     def __len__(self):
         return len(self.pts)
@@ -107,6 +116,10 @@ def open_decoder(path, backend="auto", index_dir=None):
         return CpuDecoder(path, index_dir)
     try:
         return NvDecoder(path)
+    except ImportError:
+        if backend == "gpu":
+            raise
+        return CpuDecoder(path, index_dir)       # GPU support not installed: CPU is the normal path
     except Exception as e:
         if backend == "gpu":
             raise
@@ -142,25 +155,28 @@ class FrameSource:
 
 
 def video_duration(path):
-    """Container duration (s) from the file header, or None if ffprobe can't tell."""
-    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
-                         capture_output=True, text=True).stdout.strip()
+    """Container duration (s) from the file header, or None if it can't be read."""
+    import av
     try:
-        return float(out)
-    except ValueError:
+        with av.open(str(path)) as c:
+            return c.duration / av.time_base if c.duration else None
+    except (OSError, ValueError, av.FFmpegError):
         return None
 
 
 def video_time_to_frame(path, t):
     """Frame index at player time t (s) in the video file (uses the real, jittery container timestamps)."""
-    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-                          "packet=pts_time", "-of", "csv=p=0", str(path)],
-                         capture_output=True, text=True, check=True).stdout
-    pts = np.sort(np.array([float(s) for s in out.split() if s.strip() not in ("", "N/A")]))
+    import av
+    with av.open(str(path)) as c:
+        tb = float(c.streams.video[0].time_base)
+    pts = frame_pts(path) * tb
     return int(np.clip(np.searchsorted(pts, t - 1e-6), 0, len(pts) - 1))
 
 
 def _ffmpeg_writer(path, w, h, fps, codec, quality):
+    if shutil.which("ffmpeg") is None:
+        raise RuntimeError("Exporting clips needs the ffmpeg program on the PATH "
+                           "(macOS: brew install ffmpeg; Linux: your package manager; Windows: winget install ffmpeg).")
     if codec is None:
         encs = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True).stdout
         codec = "h264_nvenc" if "h264_nvenc" in encs else "libx264"
@@ -174,10 +190,10 @@ def _ffmpeg_writer(path, w, h, fps, codec, quality):
 
 def keyframe_interval(path, n_packets=2000):
     """Frames between keyframes if the stream has a fixed GOP (as NVENC/gstreamer writes), else None."""
-    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=flags",
-                          "-read_intervals", f"%+#{n_packets}", "-of", "csv=p=0", str(path)],
-                         capture_output=True, text=True).stdout.split()
-    keys = np.flatnonzero([f.startswith("K") for f in out])
+    import av
+    with av.open(str(path)) as c:
+        flags = [pk.is_keyframe for _, pk in zip(range(n_packets), c.demux(c.streams.video[0])) if pk.size]
+    keys = np.flatnonzero(flags)
     if len(keys) < 3 or keys[0] != 0:
         return None
     d = np.unique(np.diff(keys))

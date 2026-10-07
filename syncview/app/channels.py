@@ -42,7 +42,7 @@ class ChannelPanel(QtWidgets.QWidget):
         self.table.setToolTip(
             "Edit cells directly.  Low/High Hz = filter band (blank = none).  Notch: e.g. 60 or 60,180.\n"
             "Extra: key=value for order, smooth_ms, env_lp, plot_fs, win_s.  Y range: 'auto' or 'lo, hi'.\n"
-            "Ctrl+wheel over a trace scales its Y range; double-click a trace resets it to auto.")
+            "Ctrl+wheel (⌘+scroll on macOS) over a trace scales its Y range; double-click a trace resets it to auto.")
 
         btns = QtWidgets.QHBoxLayout()
         for text, fn in [("Add", self.add_row), ("Remove", self.remove_row), ("▲", lambda: self.move(-1)),

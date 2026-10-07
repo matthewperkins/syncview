@@ -6,6 +6,7 @@
 Navigation (click the plots first so they have keyboard focus):
     drag            pan                         wheel           change time base (zoom)
     Ctrl+wheel      scale that row's Y range    double-click    reset that row's Y range to auto
+    Shift+wheel or sideways swipe: pan          (macOS: ⌘ instead of Ctrl; fn+arrows for PgUp/PgDn/Home/End)
     ← / →           one video frame             Shift+← / →     10 % of the time base
     PgUp / PgDn     one full time base          Home / End      start / end of recording
     Space           play / pause                [ / ]           slower / faster playback
@@ -28,7 +29,7 @@ from ..core.paths import default_cache_root, platform_cache_root
 from ..core.video import DECODERS, video_duration
 from ..data.cache import TraceCache
 from .channels import ChannelPanel
-from .video import VideoDecoder, VideoView
+from .video import VideoDecoder, VideoView, mono_font
 from .workers import CacheBuilder, WindowWorker
 
 TIME_BASES = [0.2, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600, 1200, 1800, 3600, 7200]
@@ -166,7 +167,9 @@ class RowViewBox(pg.ViewBox):
 
     def wheelEvent(self, ev, axis=None):
         steps = ev.delta() / 120
-        if ev.modifiers() & QtCore.Qt.ControlModifier:
+        if ev.orientation() == QtCore.Qt.Horizontal:      # sideways trackpad swipe (macOS also sends Shift+wheel so)
+            self.win.set_time(self.win.t - steps * 0.1 * self.win.span)
+        elif ev.modifiers() & QtCore.Qt.ControlModifier:  # Ctrl; on macOS Qt maps this to ⌘
             self.win.scale_row_y(self.row, 0.8 ** steps)
         elif ev.modifiers() & QtCore.Qt.ShiftModifier:
             self.win.set_time(self.win.t - steps * 0.1 * self.win.span)
@@ -309,7 +312,7 @@ class MainWindow(QtWidgets.QMainWindow):
         tb.addWidget(vid_btn)
         tb.addSeparator()
         self.clock = QtWidgets.QLabel()
-        self.clock.setFont(QtGui.QFont("monospace", 11))
+        self.clock.setFont(mono_font(11))
         tb.addWidget(self.clock)
 
         # ---- channel dock

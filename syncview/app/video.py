@@ -9,6 +9,13 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from ..core.video import keyframe_interval, open_decoder
 
 
+def mono_font(size):
+    """The platform's fixed-width font (asking for "monospace" by name stalls Qt on macOS)."""
+    f = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
+    f.setPointSize(size)
+    return f
+
+
 class VideoDecoder(QtCore.QObject):
     """Decodes frames by index (GPU or CPU, see core.video.open_decoder) in its own thread.
 
@@ -143,7 +150,7 @@ class VideoView(QtWidgets.QWidget):
                 p.drawImage(target, self._img)
             if self.caption:
                 p.setPen(QtGui.QColor("#e8e8e4"))
-                p.setFont(QtGui.QFont("monospace", 10))
+                p.setFont(mono_font(10))
                 p.drawText(target.adjusted(8, 0, -8, -6), QtCore.Qt.AlignLeft | QtCore.Qt.AlignBottom, self.caption)
         else:
             p.setPen(QtGui.QColor("#888888"))
