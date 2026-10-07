@@ -5,11 +5,12 @@ the camera trigger. Scroll and zoom smoothly from milliseconds to whole multi-ho
 0.1–300× speed, and set filters per channel. A Python API also renders synchronized clips (video on top,
 data scrolling underneath) for talks and papers.
 
-![syncview on macOS: video frame-locked to 16 EMG and GI slow-wave channels, a channel table, and a
+![syncview on macOS: video frame-locked to EMG and GI slow-wave traces, a channel table, and a
 whole-session slow-wave power overview](docs/screenshot.png)
 
-*A 2.5-hour session on macOS: masseter and digastric EMG, antrum and duodenum slow waves, and the
-antrum's slow-wave power over the whole session (bottom; the shaded box is the current view).*
+*A 2.5-hour session on macOS, 4 of 16 channels shown: masseter and digastric EMG, antrum and duodenum
+slow waves, and the antrum's slow-wave power over the whole session (bottom; the shaded box is the
+current view).*
 
 MIT-licensed (see `LICENSE`). Written mostly by an AI model; see [Provenance](#provenance-who-wrote-this-and-notes-for-whoever-changes-it-next).
 
