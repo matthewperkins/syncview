@@ -21,9 +21,9 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from ..core.oe import OERecording, frame_sample_indices
+from ..core.oe import OERecording, SyncError, check_sync
 from ..core.render import PALETTE
-from ..core.video import DECODERS
+from ..core.video import DECODERS, video_duration
 from ..data.cache import TraceCache
 from .channels import ChannelPanel
 from .video import VideoDecoder, VideoView
@@ -188,12 +188,13 @@ class Row:
 
 
 class MainWindow(QtWidgets.QMainWindow):
-    def __init__(self, rec, cache, preset, video=None, decoder="auto"):
+    def __init__(self, rec, cache, preset, video=None, decoder="auto", trigger_line=1):
         super().__init__()
         self.rec, self.cache = rec, cache
         self.setWindowTitle(f"syncview — {rec.rec_dir.parent.name}/{rec.rec_dir.name}  "
                             f"({rec.duration / 3600:.2f} h, {rec.fs:g} Hz)")
-        self.frames = rec.rising_edges(1) / rec.fs      # frame trigger times (s); refined once video is attached
+        self.trigger_line = trigger_line
+        self.frames = rec.rising_edges(trigger_line) / rec.fs  # frame trigger times (s); refined once video is attached
         self.t = float(self.frames[0]) if len(self.frames) else 0.0
         self.span = 10.0
         self.rate = 1.0
@@ -460,17 +461,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.decoder.frame_ready.connect(self._frame_ready)
 
     def _video_opened(self, n, w, h, decoder_name):
+        name = Path(self.video_path).name
         try:
-            fr = frame_sample_indices(self.rec, n, verbose=False)
-        except ValueError as e:
-            self.video_view.set_message(f"{Path(self.video_path).name}: {e}")
+            fr, issues, info = check_sync(self.rec, n, self.trigger_line, video_duration(self.video_path))
+        except SyncError as e:
+            self.video_view.set_message(f"{name}: {e}")
+            self._sync_warning(name, [str(e)], fatal=True)
             self.decoder.stop()
             self.decoder = None
             return
+        if issues:
+            self._sync_warning(name, issues)
         self.frames = fr / self.rec.fs
-        self.frame_period = float(np.median(np.diff(fr))) / self.rec.fs
-        extra = len(self.rec.rising_edges(1)) - n
-        self.statusBar().showMessage(f"{Path(self.video_path).name}: {n} frames {w}×{h}, {extra} extra trigger(s) "
+        self.frame_period = info["period"]
+        extra = info["extra"]
+        self.statusBar().showMessage(f"{name}: {n} frames {w}×{h}, {extra} extra trigger(s) "
                                      f"dropped; video spans {fmt_time(self.frames[0])} – {fmt_time(self.frames[-1])}; "
                                      f"decoding on {decoder_name}",
                                      15000)
@@ -478,6 +483,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self.t = float(self.frames[0])
         self._want_frame = None
         self.refresh()
+
+    def _sync_warning(self, name, issues, fatal=False):
+        text = "\n\n".join(f"• {m}" for m in issues)
+        for m in issues:
+            print(f"syncview: sync {'error' if fatal else 'warning'} ({name}): {m}", file=sys.stderr)
+        box = QtWidgets.QMessageBox(QtWidgets.QMessageBox.Critical if fatal else QtWidgets.QMessageBox.Warning,
+                                    "Video sync " + ("failed" if fatal else "warning"),
+                                    f"{name} on TTL line {self.trigger_line}:\n\n{text}", parent=self)
+        box.setModal(False)
+        box.show()
+        self._sync_box = box
 
     def _frame_ready(self, k, arr):
         if self.decoder is None:
@@ -704,18 +720,26 @@ def main(argv=None):
     ap.add_argument("--preset", help="channel preset JSON (save one from the Channels panel)")
     ap.add_argument("--cache", default=None,
                     help="cache folder for filtered traces (default: syncview_cache/ next to the syncview package)")
+    ap.add_argument("--stream", default="acquisition_board",
+                    help="Open Ephys continuous stream holding the data and the camera TTL (default: %(default)s)")
+    ap.add_argument("--trigger-line", type=int, default=1,
+                    help="TTL line carrying one pulse per video frame (default: %(default)s)")
     ap.add_argument("--decoder", choices=DECODERS, default="auto",
                     help="video decoding: gpu (NVIDIA, PyNvVideoCodec), cpu (FFmpeg via PyAV), "
                          "or auto = gpu if available (default)")
     args = ap.parse_args(argv)
 
-    rec = OERecording(args.rec)
+    try:
+        rec = OERecording(args.rec, stream=args.stream)
+    except (OSError, ValueError) as e:
+        ap.exit(2, f"syncview: cannot open recording: {e}\n")
     cache_root = Path(args.cache) if args.cache else Path(__file__).resolve().parents[2] / "syncview_cache"
     cache = TraceCache(rec, cache_root)
     preset = json.loads(Path(args.preset).read_text()) if args.preset else DEFAULT_PRESET
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
-    win = MainWindow(rec, cache, preset, video=args.video, decoder=args.decoder)
+    win = MainWindow(rec, cache, preset, video=args.video, decoder=args.decoder,
+                     trigger_line=args.trigger_line)
     win.show()
     win.glw.setFocus()
     return app.exec()

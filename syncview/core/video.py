@@ -114,6 +114,16 @@ class FrameSource:
             done += k
 
 
+def video_duration(path):
+    """Container duration (s) from the file header, or None if ffprobe can't tell."""
+    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+                         capture_output=True, text=True).stdout.strip()
+    try:
+        return float(out)
+    except ValueError:
+        return None
+
+
 def video_time_to_frame(path, t):
     """Frame index at player time t (s) in the video file (uses the real, jittery container timestamps)."""
     out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
