@@ -138,6 +138,15 @@ class RelTimeAxis(_NiceTimeTicks, pg.AxisItem):
         return out
 
 
+class RowLabel(pg.LabelItem):
+    """Row name that doesn't force a minimum row height (the time axis below must stay on screen)."""
+
+    def updateMin(self):
+        super().updateMin()
+        self.setMinimumHeight(0)
+        self._sizeHint[QtCore.Qt.SizeHint.MinimumSize] = (self.minimumWidth(), 0)
+
+
 class SparseYAxis(pg.AxisItem):
     """Few, major-only ticks, so stacked rows' labels don't collide."""
 
@@ -400,7 +409,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._row_index = [i for i, s in enumerate(specs) if s.get("show", True)]   # row -> table row
         first = None
         for i, s in enumerate(visible):
-            label = pg.LabelItem(s.get("label") or s["ch"], color="#e8e8e4", size="10pt", justify="right")
+            label = RowLabel(s.get("label") or s["ch"], color="#e8e8e4", size="10pt", justify="right")
             label.setMinimumWidth(130)
             label.setMaximumWidth(130)
             self.glw.addItem(label, row=i, col=0)
