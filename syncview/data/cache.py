@@ -17,6 +17,8 @@ import numpy as np
 from ..core.filters import out_step, pad_samples, process, spec_key
 
 FACTOR = 8
+MMAP_MIN_BYTES = 2 << 20  # smaller pyramid levels are read into memory: every memory map keeps a file
+                          # open, and macOS allows only 256 open files per process by default
 CHUNK_S = 1200.0          # seconds of data processed per chunk (plus filter padding on each side)
 
 
@@ -90,11 +92,11 @@ class Trace(PyramidTrace):
     def __init__(self, folder):
         self.folder = Path(folder)
         meta = json.loads((self.folder / "meta.json").read_text())
-        y = np.load(self.folder / "level0.npy", mmap_mode="r")
+        y = _load(self.folder / "level0.npy")
         mins, maxs = [y], [y]
         for k in range(1, meta["levels"] + 1):
-            mins.append(np.load(self.folder / f"min{k}.npy", mmap_mode="r"))
-            maxs.append(np.load(self.folder / f"max{k}.npy", mmap_mode="r"))
+            mins.append(_load(self.folder / f"min{k}.npy"))
+            maxs.append(_load(self.folder / f"max{k}.npy"))
         super().__init__(y, meta["dt"], 0.0, mins, maxs)
         self.meta = meta
 
@@ -122,6 +124,12 @@ class TraceCache:
                 self._open[key] = Trace(self.root / key)
                 return self._open[key]
         return None
+
+    def retain(self, specs):
+        """Close every open trace except those of specs (frees their files and memory maps)."""
+        keep = {self.key(s) for s in specs}
+        with self._lock:
+            self._open = {k: v for k, v in self._open.items() if k in keep}
 
     def missing(self, specs):
         seen, out = set(), []
@@ -186,6 +194,10 @@ class TraceCache:
             for d in tmp:
                 shutil.rmtree(d, ignore_errors=True)
             raise
+
+
+def _load(path):
+    return np.load(path, mmap_mode="r" if path.stat().st_size >= MMAP_MIN_BYTES else None)
 
 
 def _reduce(mn, mx):

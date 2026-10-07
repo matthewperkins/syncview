@@ -47,17 +47,17 @@ class CacheBuilder(QtCore.QObject):
                 if self._stop:
                     return
                 specs, self._want = self._want, None
-            todo = self.cache.missing(specs)
-            if todo:
-                keys = {self.cache.key(s) for s in todo}
-                try:
+            try:
+                todo = self.cache.missing(specs)
+                if todo:
+                    keys = {self.cache.key(s) for s in todo}
                     # abort only if something being built is no longer wanted
                     self.cache.build(todo, progress=self.progress.emit,
                                      cancel=lambda: self._stop or not keys <= self._wanted_keys)
-                except Cancelled:
-                    continue
-                except Exception:
-                    traceback.print_exc()
+            except Cancelled:
+                continue
+            except Exception:       # report and keep serving later requests
+                traceback.print_exc()
             self.finished.emit()
 
 

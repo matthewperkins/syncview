@@ -441,6 +441,7 @@ class MainWindow(QtWidgets.QMainWindow):
         lay.activate()
         # only rebuild what is needed; the overview trace goes first
         want = ([self.overview_spec] if self.overview_spec else []) + visible
+        self.cache.retain(want)
         self.builder.request(want)
         self.windows = {k: v for k, v in self.windows.items() if k in {r.key for r in self.rows}}
         self._update_overview()
@@ -761,6 +762,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh()
 
 
+def raise_open_file_limit(want=4096):
+    """Cached traces are memory-mapped files and each map holds a file open. macOS allows only 256
+    per process by default (Linux usually 1024 or more); raise the soft limit as far as allowed."""
+    try:
+        import resource
+    except ImportError:         # Windows: no such limit for memory maps
+        return
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if soft == resource.RLIM_INFINITY or soft >= want:
+        return
+    new = want if hard == resource.RLIM_INFINITY else min(want, hard)
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (new, hard))
+    except (ValueError, OSError):
+        pass
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--rec", required=True, help="Open Ephys recording folder (…/experimentN/recordingM)")
@@ -778,6 +796,7 @@ def main(argv=None):
                     help="video decoding: gpu (NVIDIA, PyNvVideoCodec), cpu (FFmpeg via PyAV), "
                          "or auto = gpu if available (default)")
     args = ap.parse_args(argv)
+    raise_open_file_limit()
 
     try:
         rec = OERecording(args.rec, stream=args.stream)
