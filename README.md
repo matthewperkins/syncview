@@ -5,6 +5,8 @@ the camera trigger. Scroll and zoom smoothly from milliseconds to whole multi-ho
 0.1–300× speed, and set filters per channel. A Python API also renders synchronized clips (video on top,
 data scrolling underneath) for talks and papers.
 
+MIT-licensed (see `LICENSE`). Written mostly by an AI model; see [Provenance](#provenance-who-wrote-this-and-notes-for-whoever-changes-it-next).
+
 Runs on macOS, Linux and Windows. An NVIDIA GPU is optional. It's used for video decoding when available;
 otherwise the CPU decoder (FFmpeg via PyAV) is used, which is frame-identical.
 
@@ -168,3 +170,43 @@ make_sync_video("clip.mp4", rec, ["…/BASLER_CAM_….mp4"], channels,
   cpu` rules out GPU problems.
 - **Scrolling stutters right after opening a recording**: the background cache build is still running;
   views are processed on demand until it finishes.
+
+## Provenance: who wrote this, and notes for whoever changes it next
+
+Most of this code, and this README, were written by **Claude**, an AI model made by
+[Anthropic](https://www.anthropic.com). Specifically **Claude Opus 5.5** (model ID `claude-opus-5-5`,
+training-data cutoff June 2026), working in **Claude Code** (CLI version 2.1.292) in two sessions on
+2026-10-07. **Matthew Perkins** directed the work: he set the goals and requirements, supplied and
+checked the recordings and videos, and decided what to keep. He holds the copyright (see `LICENSE`).
+Commits written by Claude carry a `Co-Authored-By: Claude Opus 5.5` trailer. The first commit (`70df71b`)
+imports the code as it stood at the end of the first session. History before that, including an
+exploratory notebook not in this repository, is not recorded here.
+
+If you are a person or an AI picking this up, here is what the original author knew that the code
+doesn't say out loud:
+
+- **Sync rule:** frame *k* ↔ *k*-th rising TTL edge, extra edges only at the end
+  (`core/oe.py: check_sync`). The original rig: Open Ephys acquisition board at 10 kHz, cameras (Basler,
+  Manta; HEVC via gstreamer/NVENC) hardware-triggered at 50 Hz from digital line 1, plus one extra
+  trigger about 12 s after the last frame when recording stops. Container timestamps drift about 4 s
+  over 2 h against the trigger clock, which is why nothing here trusts video timestamps for sync.
+- **Frame indexing must be identical across decoders.** `CpuDecoder` numbers frames by the rank of the
+  packet PTS. This was checked against PyNvVideoCodec's `seek_to_index` on four 1.9–2.5 h videos: same
+  frame count, mean absolute pixel difference 0.01 at the same index versus ≥0.34 between adjacent
+  frames. If you add a decoder, repeat that comparison before trusting it. The last packet of some
+  files cannot be decoded by either backend; that is a damaged final frame in the file, not a bug.
+- **Cache keys** (`core/filters.py: spec_key`) hash the recording's absolute path and every filter
+  parameter, but not labels or colours. Moving a recording invalidates its cache, and changing a
+  filter default silently creates new cache entries. Delete old ones by hand.
+- **Threads:** the cache builder, window worker and video decoder each run one background thread with
+  "latest request wins" semantics. The GPU decoder must be created in its own thread (CUDA context).
+  `CacheBuilder.stop()` must run on close, or the interpreter shuts down underneath a build.
+- **Checked:** Linux with NVIDIA (T400); a Python 3.12 clean install with no GPU module and no ffmpeg,
+  standing in for macOS; sync warnings against wrong pairs and simulated missed/double triggers.
+  **Not yet checked: a real Mac, Windows, or recordings from other rigs.** Treat those as the most
+  likely places for bugs.
+- **Defaults chosen for the original data:** the `slow` mode's 0.03 Hz low cut (GI slow-wave peaks at
+  0.06–0.11 Hz; the headstage's analog high-pass is about 0.094 Hz, first order) and the 150 Hz EMG
+  high-pass. Reconsider both for other preparations.
+
+Claude can be wrong. Everything above was checked as described, but nothing more.
