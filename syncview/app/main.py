@@ -1,7 +1,7 @@
 """syncview - interactive viewer for Open Ephys data (and, later, synchronized video).
 
     syncview --rec "OEFiles/…/Record Node 101/experiment3/recording1" [--video BASLER_CAM_….mp4]
-             [--preset my_channels.json]
+             [--preset presets/perkins_jaw_gi_16ch.json]   (default: all electrode channels, as EMG)
 
 Navigation (click the plots first so they have keyboard focus):
     drag            pan                         wheel           change time base (zoom)
@@ -21,6 +21,7 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from ..core.filters import MODES
 from ..core.oe import OERecording, SyncError, check_sync
 from ..core.render import PALETTE
 from ..core.video import DECODERS, video_duration
@@ -33,13 +34,43 @@ TIME_BASES = [0.2, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600, 1200, 1800, 3600
 RATES = [0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 100, 300]
 WINDOW_MAX_S = 180.0        # on-demand (uncached) processing only for views up to this span
 
-# Channel map: masseter CH13-16, digastric CH1-4, antrum CH5-8, duodenum CH9-12
-DEFAULT_PRESET = dict(time_base=60.0, channels=(
-    [dict(ch=f"CH{c}", label=f"masseter{i + 1}", mode="hilo") for i, c in enumerate(range(13, 17))]
-    + [dict(ch=f"CH{c}", label=f"digastric{i + 1}", mode="hilo") for i, c in enumerate(range(1, 5))]
-    + [dict(ch=f"CH{c}", label=f"antrum{i + 1}", mode="slow") for i, c in enumerate(range(5, 9))]
-    + [dict(ch=f"CH{c}", label=f"duod{i + 1}", mode="slow") for i, c in enumerate(range(9, 13))]),
-    overview=dict(ch="CH5", mode="bandpower", label="antrum1 slow-wave power (0.03-0.25 Hz RMS, 30 s)"))
+MAX_SHOWN = 16              # rows shown by the recording-derived preset; the rest start hidden
+
+
+def preset_from_recording(rec):
+    """Default preset when none is given: every electrode channel (Open Ephys type 0 / uV; ADC and AUX
+    inputs skipped), labelled by channel name, drawn as EMG (hilo); the first MAX_SHOWN rows visible."""
+    chans = [n for n, t in zip(rec.ch_names, rec.ch_types) if t == 0] \
+        or [n for n, u in zip(rec.ch_names, rec.units) if u == "uV"] or list(rec.ch_names)
+    return dict(time_base=10.0, channels=[dict(ch=n, label=n, mode="hilo", show=i < MAX_SHOWN)
+                                          for i, n in enumerate(chans)])
+
+
+def check_preset(preset, rec):
+    """Drop rows (and the overview) that refer to channels or modes this recording/version doesn't have.
+    Returns (cleaned preset, list of problems)."""
+    known, problems = set(rec.ch_names), []
+
+    def bad(spec):
+        missing = [spec.get(k) for k in ("ch", "ref") if spec.get(k) and spec.get(k) not in known]
+        if missing:
+            return f"channel {', '.join(missing)} not in this recording"
+        if spec.get("mode") not in MODES:
+            return f"unknown mode {spec.get('mode')!r}"
+        return None
+
+    out = dict(preset, channels=[])
+    for spec in preset.get("channels", []):
+        why = bad(spec)
+        if why:
+            problems.append(f"row {spec.get('label') or spec.get('ch')!r} skipped: {why}")
+        else:
+            out["channels"].append(spec)
+    if preset.get("overview") and bad(preset["overview"]):
+        problems.append(f"overview {preset['overview'].get('label') or preset['overview'].get('ch')!r} "
+                        f"skipped: {bad(preset['overview'])}")
+        out["overview"] = None
+    return out, problems
 
 
 def fmt_time(t, span=None):
@@ -334,6 +365,18 @@ class MainWindow(QtWidgets.QMainWindow):
         return dict(time_base=self.span, channels=self.panel.specs(), overview=self.overview_spec)
 
     def apply_preset(self, p):
+        p, problems = check_preset(p, self.rec)
+        if problems:
+            for m in problems:
+                print(f"syncview: preset: {m}", file=sys.stderr)
+            if not p["channels"]:
+                problems.append("No usable rows left - showing the recording's own channels instead.")
+                p = preset_from_recording(self.rec)
+            box = QtWidgets.QMessageBox(QtWidgets.QMessageBox.Warning, "Channel preset doesn't match this recording",
+                                        "\n".join(f"• {m}" for m in problems), parent=self)
+            box.setModal(False)
+            box.show()
+            self._preset_box = box
         self.span = float(p.get("time_base", self.span))
         self.span_cb.setEditText(fmt_span(self.span))
         self.overview_spec = p.get("overview")
@@ -717,7 +760,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--rec", required=True, help="Open Ephys recording folder (…/experimentN/recordingM)")
     ap.add_argument("--video", help="video recorded during this recording (one camera)")
-    ap.add_argument("--preset", help="channel preset JSON (save one from the Channels panel)")
+    ap.add_argument("--preset", help="channel preset JSON (save one from the Channels panel); "
+                                     "default: all electrode channels of the recording")
     ap.add_argument("--cache", default=None,
                     help="cache folder for filtered traces (default: syncview_cache/ next to the syncview package)")
     ap.add_argument("--stream", default="acquisition_board",
@@ -735,7 +779,7 @@ def main(argv=None):
         ap.exit(2, f"syncview: cannot open recording: {e}\n")
     cache_root = Path(args.cache) if args.cache else Path(__file__).resolve().parents[2] / "syncview_cache"
     cache = TraceCache(rec, cache_root)
-    preset = json.loads(Path(args.preset).read_text()) if args.preset else DEFAULT_PRESET
+    preset = json.loads(Path(args.preset).read_text()) if args.preset else preset_from_recording(rec)
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
     win = MainWindow(rec, cache, preset, video=args.video, decoder=args.decoder,

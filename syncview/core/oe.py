@@ -21,6 +21,7 @@ class OERecording:
         self.ch_names = [c["channel_name"] for c in cont["channels"]]
         self.bit_volts = np.array([c["bit_volts"] for c in cont["channels"]])
         self.units = [c["units"] for c in cont["channels"]]
+        self.ch_types = [c.get("type") for c in cont["channels"]]   # Open Ephys: 0 ephys, 1 aux, 2 adc
         folder = self.rec_dir / "continuous" / cont["folder_name"]
         self.data = np.memmap(folder / "continuous.dat", dtype="<i2", mode="r").reshape(-1, len(self.ch_names))
         sn = np.load(folder / "sample_numbers.npy", mmap_mode="r")
